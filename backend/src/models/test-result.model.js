@@ -23,4 +23,4 @@ const testResultSchema = mongoose.Schema({
   ],
 },{timestamps: true});
 
-export const TestResultSchema = mongoose.model("TestResultSchema",testResultSchema)
+export const TestResult = mongoose.model("TestResult",testResultSchema)

@@ -10,7 +10,7 @@ const questionSchema = new mongoose.Schema({
     },
     imageUrl: {
         type: String
-    },
+    },  
     type: {
         type: String,
         enum: ["single","multi","descriptive"],
