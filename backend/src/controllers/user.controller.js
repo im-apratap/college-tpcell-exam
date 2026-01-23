@@ -5,6 +5,24 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ENV } from "../config/env.js";
 
+const generateAccessAndRefereshTokens = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    return { accessToken, refreshToken };
+  } catch (error) {
+    throw new ApiError(
+      500,
+      "Something went wrong while generating referesh and access token",
+    );
+  }
+};
+
 export const registerUser = async (req, res, next) => {
   try {
     const { username, email, password, role } = req.body;
@@ -39,18 +57,23 @@ export const registerUser = async (req, res, next) => {
       );
     }
 
-    const payload = { userId: user._id, role: user.role };
-    const token = jwt.sign(payload, ENV.JWT_SECRET, {
-      expiresIn: ENV.JWT_SECRET_EXPIRY,
-    });
+    const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(
+      user._id,
+    );
+
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
 
     return res
       .status(201)
-      .cookie("accessToken", token, { httpOnly: true, secure: true })
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", refreshToken, options)
       .json(
         new ApiResponse(
           201,
-          { user: createdUser, accessToken: token },
+          { user: createdUser, accessToken, refreshToken },
           "User registered successfully",
         ),
       );
@@ -86,22 +109,105 @@ export const loginUser = async (req, res, next) => {
       "-password -refreshToken",
     );
 
-    const payload = { userId: user._id, role: user.role };
-    const token = jwt.sign(payload, ENV.JWT_SECRET, {
-      expiresIn: ENV.JWT_SECRET_EXPIRY,
-    });
+    const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(
+      user._id,
+    );
+
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
 
     return res
       .status(200)
-      .cookie("accessToken", token, { httpOnly: true, secure: true })
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", refreshToken, options)
       .json(
         new ApiResponse(
           200,
-          { user: loggedInUser, accessToken: token },
+          { user: loggedInUser, accessToken, refreshToken },
           "User logged in successfully",
         ),
       );
   } catch (error) {
     next(error);
+  }
+};
+
+export const logoutUser = async (req, res, next) => {
+  try {
+    await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        $unset: {
+          refreshToken: 1, // this removes the field from document
+        },
+      },
+      {
+        new: true,
+      },
+    );
+
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+
+    return res
+      .status(200)
+      .clearCookie("accessToken", options)
+      .clearCookie("refreshToken", options)
+      .json(new ApiResponse(200, {}, "User logged out"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const refreshAccessToken = async (req, res, next) => {
+  try {
+    const incomingRefreshToken =
+      req.cookies.refreshToken || req.body.refreshToken;
+
+    if (!incomingRefreshToken) {
+      throw new ApiError(401, "unauthorized request");
+    }
+
+    const decodedToken = jwt.verify(
+      incomingRefreshToken,
+      ENV.REFRESH_TOKEN_SECRET,
+    );
+
+    const user = await User.findById(decodedToken?.userId);
+
+    if (!user) {
+      throw new ApiError(401, "Invalid refresh token");
+    }
+
+    if (incomingRefreshToken !== user?.refreshToken) {
+      throw new ApiError(401, "Refresh token is expired or used");
+    }
+
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+
+    const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(
+      user._id,
+    );
+
+    return res
+      .status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", refreshToken, options)
+      .json(
+        new ApiResponse(
+          200,
+          { accessToken, refreshToken },
+          "Access token refreshed",
+        ),
+      );
+  } catch (error) {
+    next(error); // Pass error to global error handler
   }
 };
